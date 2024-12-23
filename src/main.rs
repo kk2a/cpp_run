@@ -29,7 +29,7 @@ fn main() {
 
 
     let out = source_cpp.split('.').collect::<Vec<&str>>()[0];
-    let compile_args = vec!["-std=c++23", "-Wall", "-DKK2", "-fexec-charset=CP932", source_cpp, "-o", out, "-I/Users/include/"];
+    let compile_args = vec!["-std=c++23", "-Wall", "-Wextra", "-DKK2", "-fexec-charset=CP932", source_cpp, "-o", out, "-I/Users/include/"];
     let mut time_limited = false;
 
     if args.contains(&String::from("-t")) {
