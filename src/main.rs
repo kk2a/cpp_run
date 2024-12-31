@@ -2,7 +2,7 @@ use std::process::{Command, Stdio};
 use std::fs::File;
 use std::io::{Write, Read};
 use std::env;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use wait_timeout::ChildExt;
 use std::path::Path;
 
@@ -55,11 +55,13 @@ fn main() {
     }
 
     let mut child = Command::new("./".to_owned() + out)
-        .stdin(Stdio::from(in_file))
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn() // これで非同期処理
-        .expect("Failed to execute command");
+    .stdin(Stdio::from(in_file))
+    .stdout(Stdio::piped())
+    .stderr(Stdio::piped())
+    .spawn() // これで非同期処理
+    .expect("Failed to execute command");
+
+    let start = Instant::now();
 
     if time_limited {
         let timeout = Duration::from_secs(TIME_LIMIT_SEC);
@@ -71,6 +73,15 @@ fn main() {
     } else {
         child.wait().expect("Failed to wait on child");
     }
+
+    let duration = start.elapsed();
+
+    // exit status
+    if let Some(exit_status) = child.wait().expect("Failed to wait on child").code() {
+        out_file.write_all(format!("exit status: {}\n", exit_status).as_bytes()).expect("Failed to write exit status to file");
+    }
+
+    out_file.write_all(format!("execution time: {:.2?}\n", duration).as_bytes()).expect("Failed to write execution time to file");
 
     if let Some(mut stdout) = child.stdout.take() {
         let mut buffer = Vec::new();
