@@ -5,6 +5,7 @@ use std::env;
 use std::time::{Duration, Instant};
 use wait_timeout::ChildExt;
 use std::path::Path;
+use std::thread;
 
 const IN_PATH: &str = "in.txt";
 const OUT_PATH: &str = "out.txt";
@@ -21,12 +22,6 @@ fn main() {
     let source_dir = Path::new(source_path).parent().unwrap();
     let source_cpp = Path::new(source_path).file_name().unwrap().to_str().unwrap();
     env::set_current_dir(&source_dir).expect("Failed to change directory");
-    // println!("source_path: {:?}", source_path);
-    // println!("source_dir: {:?}", source_dir);
-    // println!("source_cpp: {:?}", source_cpp);
-    // let current_dir = env::current_dir().unwrap();
-    // println!("current_dir: {:?}", current_dir);
-
 
     let out = source_cpp.split('.').collect::<Vec<&str>>()[0];
     let compile_args = vec!["-std=c++23", "-O2", "-Wall", "-Wextra", "-DKK2", "-fexec-charset=CP932", source_cpp, "-o", out, "-I/Users/include/"];
@@ -55,11 +50,28 @@ fn main() {
     }
 
     let mut child = Command::new("./".to_owned() + out)
-    .stdin(Stdio::from(in_file))
-    .stdout(Stdio::piped())
-    .stderr(Stdio::piped())
-    .spawn() // これで非同期処理
-    .expect("Failed to execute command");
+        .stdin(Stdio::from(in_file))
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("Failed to execute command");
+
+    let stdout = child.stdout.take().expect("Failed to get stdout");
+    let stderr = child.stderr.take().expect("Failed to get stderr");
+
+    let stdout_thread = thread::spawn(move || {
+        let mut buffer = Vec::new();
+        let mut reader = stdout;
+        reader.read_to_end(&mut buffer).expect("Failed to read stdout");
+        buffer
+    });
+
+    let stderr_thread = thread::spawn(move || {
+        let mut buffer = Vec::new();
+        let mut reader = stderr;
+        reader.read_to_end(&mut buffer).expect("Failed to read stderr");
+        buffer
+    });
 
     let start = Instant::now();
 
@@ -67,7 +79,6 @@ fn main() {
         let timeout = Duration::from_secs(TIME_LIMIT_SEC);
         if child.wait_timeout(timeout).unwrap().is_none() {
             child.kill().unwrap();
-            let _ = child.wait().unwrap(); // プロセスが終了するのを待つ
             out_file.write_all(b"===== Time limit exceeded =====\n").expect("Failed to write time limit exceeded message to file");
         }
     } else {
@@ -77,25 +88,19 @@ fn main() {
     let duration = start.elapsed();
 
     // exit status
-    if let Some(exit_status) = child.wait().expect("Failed to wait on child").code() {
+    if let Some(exit_status) = child.wait().ok().and_then(|status| status.code()) {
         out_file.write_all(format!("exit status: {}\n", exit_status).as_bytes()).expect("Failed to write exit status to file");
     }
 
     out_file.write_all(format!("execution time: {:.2?}\n", duration).as_bytes()).expect("Failed to write execution time to file");
 
-    if let Some(mut stdout) = child.stdout.take() {
-        let mut buffer = Vec::new();
-        stdout.read_to_end(&mut buffer).expect("Failed to read stdout");
-        out_file.write_all(b"===== Start of output message =====\n").expect("Failed to write output message to file");
-        out_file.write_all(&buffer).expect("Failed to write to output file");
-        out_file.write_all(b"\n===== End of output message =====\n").expect("Failed to write output message to file");
-    }
+    let stdout_buffer = stdout_thread.join().expect("Failed to join stdout thread");
+    out_file.write_all(b"===== Start of output message =====\n").expect("Failed to write output message to file");
+    out_file.write_all(&stdout_buffer).expect("Failed to write to output file");
+    out_file.write_all(b"\n===== End of output message =====\n").expect("Failed to write output message to file");
 
-    if let Some(mut stderr) = child.stderr.take() {
-        let mut buffer = Vec::new();
-        stderr.read_to_end(&mut buffer).expect("Failed to read stderr");
-        out_file.write_all(b"===== Start of error message =====\n").expect("Failed to write error message to file");
-        out_file.write_all(&buffer).expect("Failed to write to error file");
-        out_file.write_all(b"\n===== End of error message =====\n").expect("Failed to write error message to file");
-    }
+    let stderr_buffer = stderr_thread.join().expect("Failed to join stderr thread");
+    out_file.write_all(b"===== Start of error message =====\n").expect("Failed to write error message to file");
+    out_file.write_all(&stderr_buffer).expect("Failed to write to error file");
+    out_file.write_all(b"\n===== End of error message =====\n").expect("Failed to write error message to file");
 }
